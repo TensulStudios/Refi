@@ -1,6 +1,8 @@
+// /api/rep.js
 export default async function handler(req, res) {
-  const { url } = req.query;
-  if (!url) return res.status(400).send("Missing ?url parameter");
+  let { url } = req.query;
+  if (!url) return res.status(400).send("Missing url parameter");
+
   if (!/^https?:\/\//i.test(url)) return res.status(400).send("Invalid URL");
 
   const USER_AGENTS = [
@@ -12,27 +14,22 @@ export default async function handler(req, res) {
   const randomUA = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 
   try {
-    const response = await fetch(url, {
-      redirect: "follow",
-      headers: { "User-Agent": randomUA }
-    });
-
+    const response = await fetch(url, { redirect: "follow", headers: { "User-Agent": randomUA } });
     const contentType = response.headers.get("content-type") || "application/octet-stream";
     const buffer = await response.arrayBuffer();
 
-    // Universal CORS
+    // CORS
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "*");
     res.setHeader("Cache-Control", "no-store");
 
-    // If HTML, rewrite links and form actions
     if (contentType.includes("text/html")) {
       let html = new TextDecoder().decode(buffer);
       const proxyBase = "https://refl.temporarystudios.org/api/rep?url=";
       const base = new URL(url);
 
-      // Replace href/src/action URLs
+      // Rewrite links, images, scripts, iframes, forms
       html = html.replace(
         /(<(a|img|script|link|iframe|form)[^>]+?(href|src|action)=["'])([^"']+)(["'])/gi,
         (match, p1, _tag, _attr, target, p5) => {
@@ -45,7 +42,7 @@ export default async function handler(req, res) {
         }
       );
 
-      // Optionally: rewrite <base href> too
+      // Rewrite <base href> if present
       html = html.replace(
         /<base[^>]+href=["']([^"']+)["'][^>]*>/i,
         `<base href="${proxyBase}${encodeURIComponent(base.href)}">`
@@ -56,10 +53,9 @@ export default async function handler(req, res) {
       return;
     }
 
-    // Otherwise, stream as-is
+    // Stream other files as-is
     res.setHeader("Content-Type", contentType);
     res.status(200).send(Buffer.from(buffer));
-
   } catch (err) {
     console.error("Proxy error:", err);
     res.status(500).send("Fetch failed: " + err.message);
