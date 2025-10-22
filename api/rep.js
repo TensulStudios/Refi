@@ -1,125 +1,4 @@
-if (contentType.includes("text/html")) {
-      let html = new TextDecoder().decode(buffer);
-      const proxyBase = `${req.headers['x-forwarded-proto'] || 'https'}://${req.headers.host}/api/rep?url=`;
-      const base = new URL(url);
-
-      // Inject base tag and modify forms to work with proxy
-      html = html.replace(
-        /(<head[^>]*>)/i,
-        `$1\n<base href="${proxyBase}${encodeURIComponent(base.href)}">\n<script>
-// Intercept form submissions BEFORE DOMContentLoaded
-(function() {
-  const proxyBase = '${proxyBase}';
-  const currentUrl = '${base.href}';
-  
-  // Use capture phase to intercept before form submits
-  document.addEventListener('submit', function(e) {
-    const form = e.target;
-    if (form.tagName !== 'FORM') return;
-    
-    e.preventDefault();
-    e.stopPropagation();
-    
-    const formData = new FormData(form);
-    const params = new URLSearchParams(formData);
-    
-    // Determine the full action URL
-    let actionUrl;
-    try {
-      const action = form.getAttribute('action') || window.location.href;
-      actionUrl = new URL(action, currentUrl);
-    } catch {
-      actionUrl = new URL(currentUrl);
-    }
-    
-    if (form.method.toUpperCase() === 'GET' || !form.method) {
-      // For GET forms, append params to URL
-      actionUrl.search = params.toString();
-      window.location.href = proxyBase + encodeURIComponent(actionUrl.href);
-    } else {
-      // For POST forms
-      form.setAttribute('action', proxyBase + encodeURIComponent(actionUrl.href));
-      form.submit();
-    }
-  }, true); // Use capture phase
-})();
-</script>`
-      );
-
-      // Rewrite absolute URLs in attributes
-      html = html.replace(
-        /(<(?:a|img|script|link|iframe|form|source|video|audio)[^>]+?(?:href|src|action|data)=["'])([^"']+)(["'])/gi,
-        (match, p1, target, p3) => {
-          try {
-            // Skip if already proxied, is a data URI, javascript, or fragment
-            if (target.startsWith(proxyBase) || target.startsWith('data:') || 
-                target.startsWith('javascript:') || target.startsWith('blob:') ||
-                target.startsWith('#') || target === '') {
-              return match;
-            }
-            
-            // Skip relative URLs that are just query strings (like ?q=search)
-            if (target.startsWith('?') || target.startsWith('&')) {
-              const abs = new URL(target, base).href;
-              return `${p1}${proxyBase}${encodeURIComponent(abs)}${p3}`;
-            }
-            
-            const abs = new URL(target, base).href;
-            
-            // Avoid rewriting if it creates a loop (same URL)
-            if (abs === url) {
-              return match;
-            }
-            
-            return `${p1}${proxyBase}${encodeURIComponent(abs)}${p3}`;
-          } catch {
-            return match;
-          }
-        }
-      );
-
-      // Rewrite CSS url() references
-      html = html.replace(
-        /url\(['"]?([^'")\s]+)['"]?\)/gi,
-        (match, cssUrl) => {
-          try {
-            if (cssUrl.startsWith(proxyBase) || cssUrl.startsWith('data:')) {
-              return match;
-            }
-            const abs = new URL(cssUrl, base).href;
-            return `url('${proxyBase}${encodeURIComponent(abs)}')`;
-          } catch {
-            return match;
-          }
-        }
-      );
-
-      res.setHeader("Content-Type", "text/html; charset=utf-8");
-      res.status(200).send(html);
-      return;
-    }
-
-    // Rewrite CSS files
-    if (contentType.includes("text/css")) {
-      let css = new TextDecoder().decode(buffer);
-      const proxyBase = `${req.headers['x-forwarded-proto'] || 'https'}://${req.headers.host}/api/rep?url=`;
-      const base = new URL(url);
-
-      // Rewrite @import statements
-      css = css.replace(
-        /@import\s+(['"]?)([^'")\s]+)\1/gi,
-        (match, quote, importUrl) => {
-          try {
-            if (importUrl.startsWith(proxyBase) || importUrl.startsWith('data:')) {
-              return match;
-            }
-            const abs = new URL(importUrl, base).href;
-            return `@import ${quote}${proxyBase}${encodeURIComponent(abs)}${quote}`;
-          } catch {
-            return match;
-          }
-        }
-      );// /api/rep.js
+// /api/rep.js
 export default async function handler(req, res) {
   // Only allow GET requests
   if (req.method === 'OPTIONS') {
@@ -391,6 +270,96 @@ export default async function handler(req, res) {
 
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.status(200).send(html);
+      return;
+    }
+
+    // Rewrite CSS files
+    if (contentType.includes("text/css")) {
+      let css = new TextDecoder().decode(buffer);
+      const proxyBase = `${req.headers['x-forwarded-proto'] || 'https'}://${req.headers.host}/api/rep?url=`;
+      const base = new URL(url);
+
+      // Rewrite @import statements
+      css = css.replace(
+        /@import\s+(['"]?)([^'")\s]+)\1/gi,
+        (match, quote, importUrl) => {
+          try {
+            if (importUrl.startsWith(proxyBase) || importUrl.startsWith('data:')) {
+              return match;
+            }
+            const abs = new URL(importUrl, base).href;
+            return `@import ${quote}${proxyBase}${encodeURIComponent(abs)}${quote}`;
+          } catch {
+            return match;
+          }
+        }
+      );
+
+      // Rewrite url() references
+      css = css.replace(
+        /url\(['"]?([^'")\s]+)['"]?\)/gi,
+        (match, cssUrl) => {
+          try {
+            if (cssUrl.startsWith(proxyBase) || cssUrl.startsWith('data:')) {
+              return match;
+            }
+            const abs = new URL(cssUrl, base).href;
+            return `url('${proxyBase}${encodeURIComponent(abs)}')`;
+          } catch {
+            return match;
+          }
+        }
+      );
+
+      res.setHeader("Content-Type", "text/css; charset=utf-8");
+      res.status(200).send(css);
+      return;
+    }
+
+    // Rewrite JavaScript files (limited - mainly for dynamic imports)
+    if (contentType.includes("javascript") || contentType.includes("ecmascript") || urlPath.endsWith('.js')) {
+      let js = new TextDecoder().decode(buffer);
+      const proxyBase = `${req.headers['x-forwarded-proto'] || 'https'}://${req.headers.host}/api/rep?url=`;
+      const base = new URL(url);
+
+      // Rewrite dynamic imports - import('...')
+      js = js.replace(
+        /import\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/gi,
+        (match, importUrl) => {
+          try {
+            if (importUrl.startsWith(proxyBase) || importUrl.startsWith('data:') || importUrl.startsWith('blob:')) {
+              return match;
+            }
+            const abs = new URL(importUrl, base).href;
+            return `import('${proxyBase}${encodeURIComponent(abs)}')`;
+          } catch {
+            return match;
+          }
+        }
+      );
+
+      // Rewrite static imports - import ... from '...'
+      js = js.replace(
+        /from\s+['"`]([^'"`]+)['"`]/gi,
+        (match, importUrl) => {
+          try {
+            // Skip if it looks like a node module or already proxied
+            if (!importUrl.startsWith('.') && !importUrl.startsWith('/') && !importUrl.startsWith('http')) {
+              return match;
+            }
+            if (importUrl.startsWith(proxyBase) || importUrl.startsWith('data:')) {
+              return match;
+            }
+            const abs = new URL(importUrl, base).href;
+            return `from '${proxyBase}${encodeURIComponent(abs)}'`;
+          } catch {
+            return match;
+          }
+        }
+      );
+
+      res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+      res.status(200).send(js);
       return;
     }
 
