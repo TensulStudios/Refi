@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Re‑FI — One-time Image Proxy</title>
+  <title>Re‑FI</title>
   <style>
     :root{--bg:#0f1724;--card:#0b1220;--muted:#94a3b8;--accent:#7dd3fc}
     html,body{height:100%;margin:0;font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial}
@@ -29,7 +29,6 @@
 <body>
   <main class="card" role="main">
     <h1>Re‑FI</h1>
-    <p class="lead">Quickly fetch an image through the Re‑FI proxy. Enter any direct image URL and press <strong>Fetch</strong> to preview a one‑time proxied result.</p>
 
     <div class="row">
       <div class="input">
@@ -97,7 +96,7 @@
     copyBtn.addEventListener('click', async ()=>{
       const url = srcUrlInput.value.trim();
       if(!url){ err.textContent = 'Enter a URL to copy its proxied link.'; return }
-      const prox = location.origin + buildProxy(url);
+      const prox = buildProxy(url);
       try{
         await navigator.clipboard.writeText(prox);
         err.style.color = '';
