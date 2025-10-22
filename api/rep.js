@@ -3,22 +3,24 @@ export default async function handler(req, res) {
   const { url } = req.query;
   if (!url) return res.status(400).send("Missing ?url parameter");
 
-  // Basic URL check
-  if (!/^https?:\/\//i.test(url)) {
-    return res.status(400).send("Invalid URL");
-  }
+  if (!/^https?:\/\//i.test(url)) return res.status(400).send("Invalid URL");
 
   try {
-    const response = await fetch(url);
+    // Fetch remote resource and follow redirects
+    const response = await fetch(url, { redirect: "follow" });
     const contentType = response.headers.get("content-type") || "application/octet-stream";
     const buffer = await response.arrayBuffer();
 
-    // If it's HTML, rewrite all relevant URLs to go through this API
+    // Set universal CORS headers
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "*");
+    res.setHeader("Cache-Control", "no-store");
+
+    // If HTML, rewrite internal links/images/etc to go through proxy
     if (contentType.includes("text/html")) {
       let html = new TextDecoder().decode(buffer);
       const proxyBase = "https://refl.temporarystudios.org/api/rep?url=";
-
-      // Convert relative URLs to absolute before replacing
       const base = new URL(url);
 
       html = html.replace(
@@ -38,9 +40,8 @@ export default async function handler(req, res) {
       return;
     }
 
-    // Otherwise, stream file as-is (image, css, js, pdf, etc.)
+    // Otherwise, stream the file as-is
     res.setHeader("Content-Type", contentType);
-    res.setHeader("Cache-Control", "no-store");
     res.status(200).send(Buffer.from(buffer));
 
   } catch (err) {
