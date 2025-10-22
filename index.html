@@ -1,113 +1,100 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Re‑FI</title>
-  <style>
-    :root{--bg:#0f1724;--card:#0b1220;--muted:#94a3b8;--accent:#7dd3fc}
-    html,body{height:100%;margin:0;font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial}
-    body{background:linear-gradient(180deg,#071025 0%, #071826 60%);color:#e6eef8;display:flex;align-items:center;justify-content:center;padding:32px}
-    .card{width:100%;max-width:900px;background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);border-radius:14px;padding:28px;box-shadow:0 6px 30px rgba(2,6,23,0.6);backdrop-filter:blur(6px)}
-    h1{margin:0 0 8px;font-size:22px}
-    p.lead{margin:0 0 18px;color:var(--muted)}
-    .row{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap}
-    .input{flex:1;display:flex}
-    input[type=text]{flex:1;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:inherit;font-size:14px}
-    button{padding:0 16px;border-radius:10px;border:0;background:var(--accent);color:#002033;font-weight:600;cursor:pointer;display:flex;align-items:center}
-    .example{margin:18px 0;padding:12px;border-radius:8px;background:rgba(255,255,255,0.02);font-family:monospace;color:var(--muted);font-size:13px}
-    .preview{margin-top:18px;border-radius:10px;overflow:hidden;background:#08121a;padding:12px;display:grid;grid-template-columns:160px 1fr;gap:12px;align-items:center}
-    .preview img{max-width:160px;border-radius:6px;object-fit:cover}
-    .meta{color:var(--muted);font-size:13px}
-    .footer{margin-top:18px;color:var(--muted);font-size:13px}
-    .notice{margin-top:12px;padding:10px;border-radius:8px;background:rgba(125,211,252,0.06);color:var(--accent);font-size:13px}
-    .hidden{display:none}
-    @media (max-width:640px){.row{flex-direction:column;gap:8px}} 
-    @media (max-width:640px){.preview{grid-template-columns:1fr;}}
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Re‑FI</title>
+<style>
+  :root{--bg:#0f1724;--card:#0b1220;--muted:#94a3b8;--accent:#7dd3fc}
+  html,body{height:100%;margin:0;font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial}
+  body{background:linear-gradient(180deg,#071025 0%, #071826 60%);color:#e6eef8;display:flex;align-items:center;justify-content:center;padding:32px}
+  .card{width:100%;max-width:900px;background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);border-radius:14px;padding:28px;box-shadow:0 6px 30px rgba(2,6,23,0.6);backdrop-filter:blur(6px)}
+  h1{margin:0 0 8px;font-size:22px}
+  p.lead{margin:0 0 18px;color:var(--muted)}
+  .row{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap}
+  .input{flex:1;display:flex}
+  input[type=text]{flex:1;padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:inherit;font-size:14px}
+  button{padding:0 16px;border-radius:10px;border:0;background:var(--accent);color:#002033;font-weight:600;cursor:pointer;display:flex;align-items:center}
+  .preview{margin-top:18px;border-radius:10px;overflow:hidden;background:#08121a;padding:12px;display:grid;grid-template-columns:160px 1fr;gap:12px;align-items:center}
+  .preview img{max-width:160px;border-radius:6px;object-fit:cover}
+  .meta{color:var(--muted);font-size:13px}
+  .footer{margin-top:18px;color:var(--muted);font-size:13px}
+  .notice{margin-top:12px;padding:10px;border-radius:8px;background:rgba(125,211,252,0.06);color:var(--accent);font-size:13px}
+  .hidden{display:none}
+  @media (max-width:640px){.row{flex-direction:column;gap:8px}} 
+  @media (max-width:640px){.preview{grid-template-columns:1fr;}}
+</style>
 </head>
 <body>
-  <main class="card" role="main">
-    <h1>Re‑FI</h1>
+<main class="card" role="main">
+  <h1>Re‑FI</h1>
 
-    <div class="row">
-      <div class="input">
-        <input id="srcUrl" type="text" placeholder="https://example.com/path/to/image.png" aria-label="Image URL" />
-      </div>
-      <button id="fetchBtn">Fetch</button>
-      <button id="copyBtn">Copy proxied URL</button>
+  <div class="row">
+    <div class="input">
+      <input id="srcUrl" type="text" placeholder="https://example.com/path/to/image.png" aria-label="Image URL" />
     </div>
+    <button id="fetchBtn">Fetch</button>
+  </div>
 
-    <div class="preview hidden" id="preview">
-      <img id="previewImg" alt="Preview" src="" />
-      <div>
-        <div class="meta"><strong>Preview</strong></div>
-        <div id="metaUrl" class="meta"></div>
-        <div id="metaSize" class="meta"></div>
-        <div id="err" class="meta" style="color:#fca5a5"></div>
-      </div>
+  <div class="preview hidden" id="preview">
+    <img id="previewImg" alt="Preview" src="" />
+    <div>
+      <div class="meta"><strong>Preview</strong></div>
+      <div id="metaSize" class="meta"></div>
+      <div id="err" class="meta" style="color:#fca5a5"></div>
     </div>
+  </div>
 
-    <div class="notice">
-      Re-FI can also be used as a site proxy. This feature is currently in beta, and certain pages will not load or redirect to the correct page.
-    </div>
-  </main>
+  <div class="notice">
+    Re-FI can also be used as a site proxy. This feature is currently in beta, and certain pages will not load or redirect to the correct page.
+  </div>
+</main>
 
-  <script>
-    const fetchBtn = document.getElementById('fetchBtn');
-    const copyBtn = document.getElementById('copyBtn');
-    const srcUrlInput = document.getElementById('srcUrl');
-    const preview = document.getElementById('preview');
-    const previewImg = document.getElementById('previewImg');
-    const metaUrl = document.getElementById('metaUrl');
-    const metaSize = document.getElementById('metaSize');
-    const err = document.getElementById('err');
-    
-    function buildProxy(url){
-      return 'https://re-fi.temporarystudios.org/api/rep?url=' + encodeURIComponent(url);
-    }
+<script>
+const fetchBtn = document.getElementById('fetchBtn');
+const srcUrlInput = document.getElementById('srcUrl');
+const preview = document.getElementById('preview');
+const previewImg = document.getElementById('previewImg');
+const metaSize = document.getElementById('metaSize');
+const err = document.getElementById('err');
 
-    async function fetchImage(){
-      const url = srcUrlInput.value.trim();
-      err.textContent = '';
-      if(!url){ err.textContent = 'Enter a valid URL.'; return }
+function buildProxy(url) {
+  return 'https://re-fi.temporarystudios.org/api/rep?url=' + encodeURIComponent(url);
+}
 
-      const prox = buildProxy(url);
-      preview.classList.remove('hidden');
-      previewImg.src = '';
-      metaUrl.textContent = 'Proxied URL: ' + prox;
-      metaSize.textContent = 'Loading...';
+async function fetchImage() {
+  const url = srcUrlInput.value.trim();
+  err.textContent = '';
+  if (!url) { 
+    err.textContent = 'Enter a valid URL.'; 
+    return; 
+  }
 
-      try{
-        const response = await fetch(prox);
-        if(!response.ok){ throw new Error('Proxy returned ' + response.status) }
+  preview.classList.remove('hidden');
+  previewImg.src = '';
+  metaSize.textContent = 'Loading...';
 
-        const blob = await response.blob();
-        const sizeKB = Math.round((blob.size/1024)*10)/10;
-        metaSize.textContent = 'Size: ' + sizeKB + ' KB — Type: ' + blob.type;
-        previewImg.src = URL.createObjectURL(blob);
-      }catch(e){
-        err.textContent = 'Error: ' + e.message;
-      }
-    }
+  try {
+    const response = await fetch(buildProxy(url));
+    if (!response.ok) throw new Error('Proxy returned ' + response.status);
 
-    fetchBtn.addEventListener('click', fetchImage);
+    const blob = await response.blob();
+    const sizeKB = Math.round((blob.size/1024)*10)/10;
+    metaSize.textContent = 'Size: ' + sizeKB + ' KB — Type: ' + blob.type;
 
-    copyBtn.addEventListener('click', async ()=>{
-      const url = srcUrlInput.value.trim();
-      if(!url){ err.textContent = 'Enter a URL to copy its proxied link.'; return }
-      const prox = buildProxy(url);
-      try{
-        await navigator.clipboard.writeText(prox);
-        err.style.color = '';
-        err.textContent = 'Proxied URL copied to clipboard.';
-      }catch(e){
-        err.style.color = '#fca5a5';
-        err.textContent = 'Failed to copy: ' + e.message;
-      }
-    });
+    // Use a Blob URL to hide the actual source
+    previewImg.src = URL.createObjectURL(blob);
 
-    srcUrlInput.value = 'https://raw.githubusercontent.com/TensulStudios/temporary/main/chemp.png';
-  </script>
+  } catch (e) {
+    err.textContent = 'Error: ' + e.message;
+  }
+}
+
+// Load a default image silently
+srcUrlInput.value = 'https://raw.githubusercontent.com/TensulStudios/temporary/main/chemp.png';
+fetchImage();
+
+fetchBtn.addEventListener('click', fetchImage);
+</script>
 </body>
 </html>
