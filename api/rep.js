@@ -1,4 +1,125 @@
-// /api/rep.js
+if (contentType.includes("text/html")) {
+      let html = new TextDecoder().decode(buffer);
+      const proxyBase = `${req.headers['x-forwarded-proto'] || 'https'}://${req.headers.host}/api/rep?url=`;
+      const base = new URL(url);
+
+      // Inject base tag and modify forms to work with proxy
+      html = html.replace(
+        /(<head[^>]*>)/i,
+        `$1\n<base href="${proxyBase}${encodeURIComponent(base.href)}">\n<script>
+// Intercept form submissions BEFORE DOMContentLoaded
+(function() {
+  const proxyBase = '${proxyBase}';
+  const currentUrl = '${base.href}';
+  
+  // Use capture phase to intercept before form submits
+  document.addEventListener('submit', function(e) {
+    const form = e.target;
+    if (form.tagName !== 'FORM') return;
+    
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const formData = new FormData(form);
+    const params = new URLSearchParams(formData);
+    
+    // Determine the full action URL
+    let actionUrl;
+    try {
+      const action = form.getAttribute('action') || window.location.href;
+      actionUrl = new URL(action, currentUrl);
+    } catch {
+      actionUrl = new URL(currentUrl);
+    }
+    
+    if (form.method.toUpperCase() === 'GET' || !form.method) {
+      // For GET forms, append params to URL
+      actionUrl.search = params.toString();
+      window.location.href = proxyBase + encodeURIComponent(actionUrl.href);
+    } else {
+      // For POST forms
+      form.setAttribute('action', proxyBase + encodeURIComponent(actionUrl.href));
+      form.submit();
+    }
+  }, true); // Use capture phase
+})();
+</script>`
+      );
+
+      // Rewrite absolute URLs in attributes
+      html = html.replace(
+        /(<(?:a|img|script|link|iframe|form|source|video|audio)[^>]+?(?:href|src|action|data)=["'])([^"']+)(["'])/gi,
+        (match, p1, target, p3) => {
+          try {
+            // Skip if already proxied, is a data URI, javascript, or fragment
+            if (target.startsWith(proxyBase) || target.startsWith('data:') || 
+                target.startsWith('javascript:') || target.startsWith('blob:') ||
+                target.startsWith('#') || target === '') {
+              return match;
+            }
+            
+            // Skip relative URLs that are just query strings (like ?q=search)
+            if (target.startsWith('?') || target.startsWith('&')) {
+              const abs = new URL(target, base).href;
+              return `${p1}${proxyBase}${encodeURIComponent(abs)}${p3}`;
+            }
+            
+            const abs = new URL(target, base).href;
+            
+            // Avoid rewriting if it creates a loop (same URL)
+            if (abs === url) {
+              return match;
+            }
+            
+            return `${p1}${proxyBase}${encodeURIComponent(abs)}${p3}`;
+          } catch {
+            return match;
+          }
+        }
+      );
+
+      // Rewrite CSS url() references
+      html = html.replace(
+        /url\(['"]?([^'")\s]+)['"]?\)/gi,
+        (match, cssUrl) => {
+          try {
+            if (cssUrl.startsWith(proxyBase) || cssUrl.startsWith('data:')) {
+              return match;
+            }
+            const abs = new URL(cssUrl, base).href;
+            return `url('${proxyBase}${encodeURIComponent(abs)}')`;
+          } catch {
+            return match;
+          }
+        }
+      );
+
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.status(200).send(html);
+      return;
+    }
+
+    // Rewrite CSS files
+    if (contentType.includes("text/css")) {
+      let css = new TextDecoder().decode(buffer);
+      const proxyBase = `${req.headers['x-forwarded-proto'] || 'https'}://${req.headers.host}/api/rep?url=`;
+      const base = new URL(url);
+
+      // Rewrite @import statements
+      css = css.replace(
+        /@import\s+(['"]?)([^'")\s]+)\1/gi,
+        (match, quote, importUrl) => {
+          try {
+            if (importUrl.startsWith(proxyBase) || importUrl.startsWith('data:')) {
+              return match;
+            }
+            const abs = new URL(importUrl, base).href;
+            return `@import ${quote}${proxyBase}${encodeURIComponent(abs)}${quote}`;
+          } catch {
+            return match;
+          }
+        }
+      );// /api/rep.js
 export default async function handler(req, res) {
   // Only allow GET requests
   if (req.method === 'OPTIONS') {
@@ -127,24 +248,36 @@ export default async function handler(req, res) {
       return res.status(413).send("Content too large");
     }
 
-    const contentType = response.headers.get("content-type") || "application/octet-stream";
+    const contentType = response.headers.get("content-type") || "";
     
     // Security: Only proxy safe content types
     const allowedTypes = [
-      'text/html',
-      'text/css',
-      'text/javascript',
+      'text/',
       'application/javascript',
+      'application/x-javascript',
+      'application/ecmascript',
       'application/json',
-      'image/',
-      'font/',
       'application/xml',
-      'text/xml'
+      'application/xhtml+xml',
+      'image/',
+      'video/',
+      'audio/',
+      'font/',
+      'application/font',
+      'application/wasm',
+      'application/octet-stream', // Allow for JS files without proper content-type
     ];
 
-    const isSafeType = allowedTypes.some(type => contentType.toLowerCase().includes(type));
+    // Also check file extension if content-type is missing or generic
+    const urlPath = parsedUrl.pathname.toLowerCase();
+    const safeExtensions = ['.js', '.css', '.html', '.json', '.xml', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.woff', '.woff2', '.ttf', '.otf', '.eot', '.mp3', '.mp4', '.webm', '.wav', '.ogg'];
+    
+    const isSafeType = allowedTypes.some(type => contentType.toLowerCase().includes(type)) ||
+                       safeExtensions.some(ext => urlPath.endsWith(ext)) ||
+                       contentType === ""; // Allow empty content-type
+
     if (!isSafeType) {
-      return res.status(403).send("Content type not allowed");
+      return res.status(403).send("Content type not allowed: " + contentType);
     }
 
     const buffer = await response.arrayBuffer();
@@ -169,35 +302,42 @@ export default async function handler(req, res) {
       html = html.replace(
         /(<head[^>]*>)/i,
         `$1\n<base href="${proxyBase}${encodeURIComponent(base.href)}">\n<script>
-// Intercept form submissions to route through proxy
-document.addEventListener('DOMContentLoaded', function() {
-  document.querySelectorAll('form').forEach(form => {
-    const originalAction = form.action;
-    form.addEventListener('submit', function(e) {
-      e.preventDefault();
-      const formData = new FormData(this);
-      const params = new URLSearchParams(formData);
-      
-      // Determine the full action URL
-      let actionUrl;
-      try {
-        actionUrl = new URL(this.action || window.location.href);
-      } catch {
-        actionUrl = new URL(window.location.href);
-      }
-      
-      if (this.method.toUpperCase() === 'GET') {
-        // For GET forms, append params to URL
-        actionUrl.search = params.toString();
-        window.location.href = '${proxyBase}' + encodeURIComponent(actionUrl.href);
-      } else {
-        // For POST forms, we can't easily proxy, so try direct submission
-        this.action = '${proxyBase}' + encodeURIComponent(actionUrl.href);
-        this.submit();
-      }
-    });
-  });
-});
+// Intercept form submissions BEFORE DOMContentLoaded
+(function() {
+  const proxyBase = '${proxyBase}';
+  const currentUrl = '${base.href}';
+  
+  // Use capture phase to intercept before form submits
+  document.addEventListener('submit', function(e) {
+    const form = e.target;
+    if (form.tagName !== 'FORM') return;
+    
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const formData = new FormData(form);
+    const params = new URLSearchParams(formData);
+    
+    // Determine the full action URL
+    let actionUrl;
+    try {
+      const action = form.getAttribute('action') || window.location.href;
+      actionUrl = new URL(action, currentUrl);
+    } catch {
+      actionUrl = new URL(currentUrl);
+    }
+    
+    if (form.method.toUpperCase() === 'GET' || !form.method) {
+      // For GET forms, append params to URL
+      actionUrl.search = params.toString();
+      window.location.href = proxyBase + encodeURIComponent(actionUrl.href);
+    } else {
+      // For POST forms
+      form.setAttribute('action', proxyBase + encodeURIComponent(actionUrl.href));
+      form.submit();
+    }
+  }, true); // Use capture phase
+})();
 </script>`
       );
 
