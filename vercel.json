@@ -1,0 +1,12 @@
+{
+  "redirects": [
+    {
+      "source": "/(https?:\\/\\/.*)",
+      "destination": "/api/rep?url=$1",
+      "permanent": false,
+      "has": [
+        { "type": "host", "value": "refl.temporarystudios.org" }
+      ]
+    }
+  ]
+}
