@@ -12,10 +12,7 @@ export default async function handler(req, res) {
     return res.status(405).send("Method not allowed");
   }
 
-  let { url, q } = req.query;
-  
-  // Support both 'url' and 'q' parameters (for search forms)
-  url = url || q;
+  let { url } = req.query;
   
   if (!url) return res.status(400).send("Missing url parameter");
 
@@ -26,9 +23,9 @@ export default async function handler(req, res) {
     return res.status(400).send("Invalid URL encoding");
   }
 
-  // Validate URL format
+  // If URL doesn't start with http/https, assume it's incomplete and reject it
   if (!/^https?:\/\//i.test(url)) {
-    return res.status(400).send("Invalid URL protocol - only http/https allowed");
+    return res.status(400).send("Invalid URL protocol - only http/https allowed. Full URL required.");
   }
 
   let parsedUrl;
@@ -175,14 +172,28 @@ export default async function handler(req, res) {
 // Intercept form submissions to route through proxy
 document.addEventListener('DOMContentLoaded', function() {
   document.querySelectorAll('form').forEach(form => {
+    const originalAction = form.action;
     form.addEventListener('submit', function(e) {
+      e.preventDefault();
+      const formData = new FormData(this);
+      const params = new URLSearchParams(formData);
+      
+      // Determine the full action URL
+      let actionUrl;
+      try {
+        actionUrl = new URL(this.action || window.location.href);
+      } catch {
+        actionUrl = new URL(window.location.href);
+      }
+      
       if (this.method.toUpperCase() === 'GET') {
-        e.preventDefault();
-        const formData = new FormData(this);
-        const params = new URLSearchParams(formData);
-        const action = new URL(this.action || window.location.href);
-        action.search = params.toString();
-        window.location.href = '${proxyBase}' + encodeURIComponent(action.href);
+        // For GET forms, append params to URL
+        actionUrl.search = params.toString();
+        window.location.href = '${proxyBase}' + encodeURIComponent(actionUrl.href);
+      } else {
+        // For POST forms, we can't easily proxy, so try direct submission
+        this.action = '${proxyBase}' + encodeURIComponent(actionUrl.href);
+        this.submit();
       }
     });
   });
