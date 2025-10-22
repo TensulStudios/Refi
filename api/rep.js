@@ -12,7 +12,11 @@ export default async function handler(req, res) {
     return res.status(405).send("Method not allowed");
   }
 
-  let { url } = req.query;
+  let { url, q } = req.query;
+  
+  // Support both 'url' and 'q' parameters (for search forms)
+  url = url || q;
+  
   if (!url) return res.status(400).send("Missing url parameter");
 
   // Decode URL if it's encoded
@@ -34,7 +38,7 @@ export default async function handler(req, res) {
     return res.status(400).send("Malformed URL");
   }
 
-  // Security: Block private/internal IP addresses and localhost
+  // Security: Block private/internal IP addresses, localhost, and cloud metadata endpoints
   const hostname = parsedUrl.hostname.toLowerCase();
   const blockedPatterns = [
     /^localhost$/i,
@@ -42,14 +46,38 @@ export default async function handler(req, res) {
     /^10\./,
     /^172\.(1[6-9]|2[0-9]|3[0-1])\./,
     /^192\.168\./,
-    /^169\.254\./, // Link-local
+    /^169\.254\./, // Link-local & AWS/GCP/Azure metadata endpoint
     /^::1$/, // IPv6 localhost
     /^fe80:/i, // IPv6 link-local
     /^fc00:/i, // IPv6 private
+    /^fd00:/i, // IPv6 unique local
   ];
 
-  if (blockedPatterns.some(pattern => pattern.test(hostname))) {
+  // Block cloud metadata endpoints explicitly
+  const blockedHosts = [
+    'metadata.google.internal',
+    '169.254.169.254', // AWS/GCP/Azure/Oracle metadata
+    'metadata.azure.com',
+    'metadata.packet.net',
+  ];
+
+  if (blockedPatterns.some(pattern => pattern.test(hostname)) || 
+      blockedHosts.includes(hostname)) {
     return res.status(403).send("Access to private/internal addresses is forbidden");
+  }
+
+  // Additional check: Resolve and validate IP address isn't private
+  // Note: This requires DNS resolution which may not be available in all environments
+  try {
+    const dns = require('dns').promises;
+    const addresses = await dns.resolve4(hostname).catch(() => []);
+    for (const addr of addresses) {
+      if (blockedPatterns.some(pattern => pattern.test(addr))) {
+        return res.status(403).send("Domain resolves to private IP address");
+      }
+    }
+  } catch (e) {
+    // DNS check failed, continue anyway (serverless may not have DNS access)
   }
 
   // Optional: Whitelist specific domains (uncomment to enable)
@@ -71,18 +99,30 @@ export default async function handler(req, res) {
     const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
 
     const response = await fetch(url, {
-      redirect: "follow",
+      redirect: "manual", // Don't follow redirects automatically
       headers: {
         "User-Agent": randomUA,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5",
       },
       signal: controller.signal,
-      // Limit redirects
-      follow: 5
     });
 
     clearTimeout(timeoutId);
+
+    // Handle redirects manually to avoid loops
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location');
+      if (location) {
+        try {
+          const redirectUrl = new URL(location, url).href;
+          const proxyBase = `${req.headers['x-forwarded-proto'] || 'https'}://${req.headers.host}/api/rep?url=`;
+          return res.redirect(302, `${proxyBase}${encodeURIComponent(redirectUrl)}`);
+        } catch (e) {
+          return res.status(400).send("Invalid redirect location");
+        }
+      }
+    }
 
     // Check response size (limit to 10MB)
     const contentLength = response.headers.get("content-length");
@@ -128,10 +168,26 @@ export default async function handler(req, res) {
       const proxyBase = `${req.headers['x-forwarded-proto'] || 'https'}://${req.headers.host}/api/rep?url=`;
       const base = new URL(url);
 
-      // Inject base tag at the top of <head>
+      // Inject base tag and modify forms to work with proxy
       html = html.replace(
         /(<head[^>]*>)/i,
-        `$1\n<base href="${proxyBase}${encodeURIComponent(base.href)}">`
+        `$1\n<base href="${proxyBase}${encodeURIComponent(base.href)}">\n<script>
+// Intercept form submissions to route through proxy
+document.addEventListener('DOMContentLoaded', function() {
+  document.querySelectorAll('form').forEach(form => {
+    form.addEventListener('submit', function(e) {
+      if (this.method.toUpperCase() === 'GET') {
+        e.preventDefault();
+        const formData = new FormData(this);
+        const params = new URLSearchParams(formData);
+        const action = new URL(this.action || window.location.href);
+        action.search = params.toString();
+        window.location.href = '${proxyBase}' + encodeURIComponent(action.href);
+      }
+    });
+  });
+});
+</script>`
       );
 
       // Rewrite absolute URLs in attributes
@@ -139,11 +195,26 @@ export default async function handler(req, res) {
         /(<(?:a|img|script|link|iframe|form|source|video|audio)[^>]+?(?:href|src|action|data)=["'])([^"']+)(["'])/gi,
         (match, p1, target, p3) => {
           try {
-            // Skip if already proxied or is a data URI
-            if (target.startsWith(proxyBase) || target.startsWith('data:') || target.startsWith('javascript:') || target.startsWith('#')) {
+            // Skip if already proxied, is a data URI, javascript, or fragment
+            if (target.startsWith(proxyBase) || target.startsWith('data:') || 
+                target.startsWith('javascript:') || target.startsWith('blob:') ||
+                target.startsWith('#') || target === '') {
               return match;
             }
+            
+            // Skip relative URLs that are just query strings (like ?q=search)
+            if (target.startsWith('?') || target.startsWith('&')) {
+              const abs = new URL(target, base).href;
+              return `${p1}${proxyBase}${encodeURIComponent(abs)}${p3}`;
+            }
+            
             const abs = new URL(target, base).href;
+            
+            // Avoid rewriting if it creates a loop (same URL)
+            if (abs === url) {
+              return match;
+            }
+            
             return `${p1}${proxyBase}${encodeURIComponent(abs)}${p3}`;
           } catch {
             return match;
