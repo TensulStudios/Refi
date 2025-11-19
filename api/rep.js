@@ -11,29 +11,46 @@ export default async function handler(req, res) {
     return res.status(405).send("Method not allowed");
   }
 
-  let { url } = req.query;
+  let { url, ...otherParams } = req.query;
   
-  // If URL is missing but we have query params, this might be a relative redirect
-  if (!url && Object.keys(req.query).length > 0) {
-    // Get the referer to determine the base URL
+  // If URL is missing but we have query params, this is likely a form submission
+  if (!url && Object.keys(otherParams).length > 0) {
     const referer = req.headers.referer || req.headers.referrer;
     if (referer) {
       try {
-        // Extract original URL from referer
-        const refererUrl = new URL(referer);
+        // Extract the original URL from the referer
         const originalUrlMatch = referer.match(/[?&]url=([^&]+)/);
         if (originalUrlMatch) {
           const baseUrl = decodeURIComponent(originalUrlMatch[1]);
           const baseUrlObj = new URL(baseUrl);
-          // Reconstruct the URL with the query params
-          const queryString = new URLSearchParams(req.query).toString();
-          url = `${baseUrlObj.origin}${baseUrlObj.pathname}?${queryString}`;
+          
+          // For Google and similar sites, if we're on the homepage and searching,
+          // the form submits to /search
+          let targetPath = baseUrlObj.pathname;
+          
+          // Detect if this is a Google search (has 'q' parameter and we're on google.com)
+          if (otherParams.q && baseUrlObj.hostname.includes('google.')) {
+            targetPath = '/search';
+          }
+          // For other sites submitting from homepage
+          else if (baseUrlObj.pathname === '/') {
+            targetPath = '/search'; // Common pattern
+          }
+          
+          // Build the URL
+          const queryString = new URLSearchParams(otherParams).toString();
+          url = `${baseUrlObj.origin}${targetPath}?${queryString}`;
+          
+          console.log(`Reconstructed form submission URL: ${url}`);
+        } else {
+          return res.status(400).send("Missing url parameter - no base URL in referer");
         }
       } catch (e) {
-        return res.status(400).send("Could not determine target URL from referer");
+        console.error("Error reconstructing URL:", e);
+        return res.status(400).send("Error: " + e.message);
       }
     } else {
-      return res.status(400).send("Missing url parameter");
+      return res.status(400).send("Missing url parameter (no referer)");
     }
   }
   
@@ -302,15 +319,31 @@ export default async function handler(req, res) {
     
     const formData = new FormData(form);
     const method = (form.method || 'GET').toUpperCase();
-    let action = form.action;
     
-    // If action is relative or empty, use current URL
-    if (!action || action === originalLocation.href) {
+    // Get the form action, handling all cases
+    let action = form.getAttribute('action');
+    
+    // If no action or empty, use current page URL
+    if (!action || action === '' || action === window.location.href) {
       action = currentLocation;
     }
     
     try {
-      const actionUrl = new URL(action, currentLocation);
+      // Resolve the action URL relative to the current page
+      let actionUrl;
+      if (action.startsWith('?') || action.startsWith('&')) {
+        // Query string only
+        actionUrl = new URL(ORIGINAL_ORIGIN + ORIGINAL_PATHNAME + action);
+      } else if (action.startsWith('/') && !action.startsWith('//')) {
+        // Absolute path
+        actionUrl = new URL(action, ORIGINAL_ORIGIN);
+      } else if (action.startsWith('http://') || action.startsWith('https://')) {
+        // Full URL
+        actionUrl = new URL(action);
+      } else {
+        // Relative path
+        actionUrl = new URL(action, currentLocation);
+      }
       
       if (method === 'GET') {
         const params = new URLSearchParams(formData);
@@ -336,6 +369,7 @@ export default async function handler(req, res) {
       }
     } catch (err) {
       console.error('Form submission error:', err);
+      // Last resort fallback
       form.submit();
     }
   }, true);
@@ -398,12 +432,16 @@ export default async function handler(req, res) {
             let absolute;
             if (url.startsWith('?') || url.startsWith('&')) {
               absolute = base.origin + base.pathname + url;
+            } else if (url.startsWith('/') && !url.startsWith('//')) {
+              // Absolute path relative to origin
+              absolute = base.origin + url;
             } else {
               absolute = new URL(url, base).href;
             }
             
             return `${tagStart}${attrStart}${proxyBase}${encodeURIComponent(absolute)}${attrEnd}`;
-          } catch {
+          } catch (e) {
+            console.error('Error rewriting URL:', url, e);
             return match;
           }
         }
