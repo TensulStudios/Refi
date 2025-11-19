@@ -1,11 +1,20 @@
 {
   "rewrites": [
     {
-      "source": "/:protocol(http|https)/:path(.*)",
-      "destination": "/api/rep?url=:protocol://:path",
-      "has": [
-        { "type": "host", "value": "re-fi.temporarystudios.org" }
-      ]
+      "source": "/http/:path*",
+      "destination": "/api/rep?url=http://:path*"
+    },
+    {
+      "source": "/https/:path*",
+      "destination": "/api/rep?url=https://:path*"
+    },
+    {
+      "source": "/:domain.:tld/:path*",
+      "destination": "/api/rep?url=https://:domain.:tld/:path*"
+    },
+    {
+      "source": "/:domain.:tld",
+      "destination": "/api/rep?url=https://:domain.:tld"
     }
   ],
   "functions": {
