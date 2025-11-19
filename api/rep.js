@@ -13,6 +13,30 @@ export default async function handler(req, res) {
 
   let { url } = req.query;
   
+  // If URL is missing but we have query params, this might be a relative redirect
+  if (!url && Object.keys(req.query).length > 0) {
+    // Get the referer to determine the base URL
+    const referer = req.headers.referer || req.headers.referrer;
+    if (referer) {
+      try {
+        // Extract original URL from referer
+        const refererUrl = new URL(referer);
+        const originalUrlMatch = referer.match(/[?&]url=([^&]+)/);
+        if (originalUrlMatch) {
+          const baseUrl = decodeURIComponent(originalUrlMatch[1]);
+          const baseUrlObj = new URL(baseUrl);
+          // Reconstruct the URL with the query params
+          const queryString = new URLSearchParams(req.query).toString();
+          url = `${baseUrlObj.origin}${baseUrlObj.pathname}?${queryString}`;
+        }
+      } catch (e) {
+        return res.status(400).send("Could not determine target URL from referer");
+      }
+    } else {
+      return res.status(400).send("Missing url parameter");
+    }
+  }
+  
   if (!url) return res.status(400).send("Missing url parameter");
 
   try {
@@ -55,7 +79,7 @@ export default async function handler(req, res) {
     const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     const fetchOptions = {
-      redirect: "follow", // Follow redirects automatically
+      redirect: "follow",
       headers: {
         "User-Agent": randomUA,
         "Accept": req.headers.accept || "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -123,6 +147,7 @@ export default async function handler(req, res) {
   const PROXY_BASE = '${proxyBase}';
   const ORIGINAL_URL = '${base.href}';
   const ORIGINAL_ORIGIN = '${base.origin}';
+  const ORIGINAL_PATHNAME = '${base.pathname}';
   
   // Rewrite URL to use proxy
   function rewriteUrl(urlStr) {
@@ -132,11 +157,79 @@ export default async function handler(req, res) {
     }
     
     try {
-      const absolute = new URL(urlStr, ORIGINAL_URL).href;
+      // Handle relative URLs properly
+      let absolute;
+      if (urlStr.startsWith('?') || urlStr.startsWith('&')) {
+        // Query string only - append to current page
+        absolute = ORIGINAL_ORIGIN + ORIGINAL_PATHNAME + urlStr;
+      } else {
+        absolute = new URL(urlStr, ORIGINAL_URL).href;
+      }
       return PROXY_BASE + encodeURIComponent(absolute);
     } catch {
       return urlStr;
     }
+  }
+  
+  // Override window.location to handle navigation properly
+  let currentLocation = ORIGINAL_URL;
+  const originalLocation = window.location;
+  
+  // Intercept location changes
+  const locationProxy = new Proxy({}, {
+    get: function(target, prop) {
+      const currentUrl = new URL(currentLocation);
+      
+      if (prop === 'href') return currentLocation;
+      if (prop === 'origin') return currentUrl.origin;
+      if (prop === 'protocol') return currentUrl.protocol;
+      if (prop === 'host') return currentUrl.host;
+      if (prop === 'hostname') return currentUrl.hostname;
+      if (prop === 'port') return currentUrl.port;
+      if (prop === 'pathname') return currentUrl.pathname;
+      if (prop === 'search') return currentUrl.search;
+      if (prop === 'hash') return currentUrl.hash;
+      
+      if (prop === 'assign') {
+        return function(url) {
+          const newUrl = rewriteUrl(url);
+          originalLocation.assign(newUrl);
+        };
+      }
+      if (prop === 'replace') {
+        return function(url) {
+          const newUrl = rewriteUrl(url);
+          originalLocation.replace(newUrl);
+        };
+      }
+      if (prop === 'reload') {
+        return function() {
+          originalLocation.reload();
+        };
+      }
+      
+      return originalLocation[prop];
+    },
+    set: function(target, prop, value) {
+      if (prop === 'href') {
+        const newUrl = rewriteUrl(value);
+        originalLocation.href = newUrl;
+        return true;
+      }
+      return false;
+    }
+  });
+  
+  try {
+    Object.defineProperty(window, 'location', {
+      get: function() { return locationProxy; },
+      set: function(value) { 
+        const newUrl = rewriteUrl(value);
+        originalLocation.href = newUrl;
+      }
+    });
+  } catch (e) {
+    // May fail in strict mode
   }
   
   // Override fetch
@@ -186,6 +279,14 @@ export default async function handler(req, res) {
           srcDescriptor.set.call(this, rewriteUrl(value));
         }
       });
+    } else if (tagName.toLowerCase() === 'a') {
+      const hrefDescriptor = Object.getOwnPropertyDescriptor(HTMLAnchorElement.prototype, 'href');
+      Object.defineProperty(element, 'href', {
+        get: hrefDescriptor.get,
+        set: function(value) {
+          hrefDescriptor.set.call(this, rewriteUrl(value));
+        }
+      });
     }
     
     return element;
@@ -201,17 +302,22 @@ export default async function handler(req, res) {
     
     const formData = new FormData(form);
     const method = (form.method || 'GET').toUpperCase();
-    const action = form.action || window.location.href;
+    let action = form.action;
+    
+    // If action is relative or empty, use current URL
+    if (!action || action === originalLocation.href) {
+      action = currentLocation;
+    }
     
     try {
-      const actionUrl = new URL(action, ORIGINAL_URL);
+      const actionUrl = new URL(action, currentLocation);
       
       if (method === 'GET') {
         const params = new URLSearchParams(formData);
         actionUrl.search = params.toString();
         window.location.href = PROXY_BASE + encodeURIComponent(actionUrl.href);
       } else {
-        // For POST, create a temporary form
+        // For POST, create a temporary form pointing to proxied URL
         const tempForm = document.createElement('form');
         tempForm.method = 'POST';
         tempForm.action = PROXY_BASE + encodeURIComponent(actionUrl.href);
@@ -230,29 +336,40 @@ export default async function handler(req, res) {
       }
     } catch (err) {
       console.error('Form submission error:', err);
-      form.submit(); // Fallback to normal submission
+      form.submit();
     }
   }, true);
   
-  // Fix window.location to show original URL
-  try {
-    Object.defineProperty(window, 'location', {
-      get: function() {
-        const loc = window.top.location;
-        return new Proxy(loc, {
-          get: function(target, prop) {
-            if (prop === 'href') return ORIGINAL_URL;
-            if (prop === 'origin') return ORIGINAL_ORIGIN;
-            if (prop === 'host') return new URL(ORIGINAL_URL).host;
-            if (prop === 'hostname') return new URL(ORIGINAL_URL).hostname;
-            return target[prop];
-          }
-        });
+  // Intercept link clicks to ensure they go through proxy
+  document.addEventListener('click', function(e) {
+    let target = e.target;
+    
+    // Find the closest anchor tag
+    while (target && target.tagName !== 'A') {
+      target = target.parentElement;
+    }
+    
+    if (!target || target.tagName !== 'A') return;
+    
+    const href = target.getAttribute('href');
+    if (!href || href.startsWith('#') || href.startsWith('javascript:') || 
+        href.startsWith('mailto:') || href.startsWith('tel:')) {
+      return;
+    }
+    
+    // If it's not already proxied, intercept it
+    if (!href.includes(PROXY_BASE)) {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      try {
+        const absolute = new URL(href, currentLocation).href;
+        window.location.href = PROXY_BASE + encodeURIComponent(absolute);
+      } catch (err) {
+        console.error('Link navigation error:', err);
       }
-    });
-  } catch (e) {
-    // May fail in some contexts
-  }
+    }
+  }, true);
 })();
 </script>`
       );
@@ -277,7 +394,14 @@ export default async function handler(req, res) {
               return `${tagStart}${attrStart}${rewritten}${attrEnd}`;
             }
             
-            const absolute = new URL(url, base).href;
+            // Handle query strings that are relative
+            let absolute;
+            if (url.startsWith('?') || url.startsWith('&')) {
+              absolute = base.origin + base.pathname + url;
+            } else {
+              absolute = new URL(url, base).href;
+            }
+            
             return `${tagStart}${attrStart}${proxyBase}${encodeURIComponent(absolute)}${attrEnd}`;
           } catch {
             return match;
