@@ -1,11 +1,27 @@
 {
-  "redirects": [
+  "rewrites": [
     {
-      "source": "/(https?:\\/\\/.*)",
-      "destination": "/api/rep?url=$1",
-      "permanent": false,
+      "source": "/:protocol(http|https)/:path(.*)",
+      "destination": "/api/rep?url=:protocol://:path",
       "has": [
-        { "type": "host", "value": "refl.temporarystudios.org" }
+        { "type": "host", "value": "re-fi.temporarystudios.org" }
+      ]
+    }
+  ],
+  "functions": {
+    "api/rep.js": {
+      "memory": 1024,
+      "maxDuration": 10
+    }
+  },
+  "headers": [
+    {
+      "source": "/api/rep",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, s-maxage=3600, stale-while-revalidate=86400"
+        }
       ]
     }
   ]
